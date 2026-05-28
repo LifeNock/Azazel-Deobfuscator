@@ -362,7 +362,7 @@ static std::string logToLua(const std::string& rawLog) {
 
     std::ostringstream lua;
     lua << "-- deobfuscated by lifenock\n";
-    lua << "-- Azazel Deobfuscator - sandbox analysis\n\n";
+    lua << "-- Unobfuscated By Azazel Deobfuscator\n\n";
 
     if (!services.empty()) {
         lua << "-- services\n";
