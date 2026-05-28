@@ -1,4 +1,3 @@
-// anyone can fork this as long as there is credit, the ai will not work on other forks.
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include "sandbox.h"
@@ -8,7 +7,6 @@
 #include <set>
 #include <map>
 
-// embedded sandbox.lua (generic version — httpget returns "" so url is logged only)
 static const char* SANDBOX_LUA = R"SANDBOX(
 local LOG = {}
 local function log(tag, ...)
@@ -227,7 +225,6 @@ for _,entry in ipairs(LOG) do print(entry) end
 print("=== END LOG ===")
 )SANDBOX";
 
-// find lua.exe in common locations
 std::string findLuaExe() {
     static const char* candidates[] = {
         "C:/Users/lifenock/AppData/Local/Programs/Lua/bin/lua.exe",
@@ -240,7 +237,6 @@ std::string findLuaExe() {
         if (GetFileAttributesA(candidates[i]) != INVALID_FILE_ATTRIBUTES)
             return candidates[i];
     }
-    // search PATH
     char buf[MAX_PATH];
     if (SearchPathA(nullptr, "lua.exe", nullptr, MAX_PATH, buf, nullptr))
         return std::string(buf);
@@ -343,7 +339,6 @@ static std::string logToLua(const std::string& rawLog) {
         } else if (line.size() > 15 && line.substr(0, 15) == "[INSTANCE_NEW] ") {
             instances.push_back(line.substr(15));
         } else if (line.size() > 13 && line.substr(0, 13) == "[WAIT_FOR_CHILD] ") {
-            // [WAIT_FOR_CHILD] | parentClass | childName
             auto parts = splitPipe(line.substr(13));
             if (parts.size() >= 2) {
                 std::string entry = parts[0] + " -> " + parts[1];
@@ -355,7 +350,6 @@ static std::string logToLua(const std::string& rawLog) {
                 size_t last = body.rfind(" | ");
                 if (last != std::string::npos) chatMessages.push_back(body.substr(last + 3));
             } else if (body.find(".Connect") != std::string::npos || body.find("Connect") != std::string::npos) {
-                // extract event name
                 size_t pipe = body.find(" | ");
                 std::string chain = (pipe != std::string::npos) ? body.substr(0, pipe) : body;
                 connections.push_back(chain);
@@ -370,7 +364,6 @@ static std::string logToLua(const std::string& rawLog) {
     lua << "-- deobfuscated by lifenock\n";
     lua << "-- Azazel Deobfuscator - sandbox analysis\n\n";
 
-    // services
     if (!services.empty()) {
         lua << "-- services\n";
         for (auto& s : services)
@@ -378,7 +371,6 @@ static std::string logToLua(const std::string& rawLog) {
         lua << "\n";
     }
 
-    // remote event setup + fires
     if (!remoteFires.empty()) {
         lua << "-- remote events\n";
         lua << "local cmd = ReplicatedStorage:WaitForChild(\"cmd\")\n";
@@ -394,7 +386,6 @@ static std::string logToLua(const std::string& rawLog) {
         lua << "\n";
     }
 
-    // http + loadstring
     if (!httpUrls.empty()) {
         lua << "-- http / loadstring\n";
         for (size_t i = 0; i < httpUrls.size(); i++) {
@@ -406,7 +397,6 @@ static std::string logToLua(const std::string& rawLog) {
         lua << "\n";
     }
 
-    // instances
     if (!instances.empty()) {
         lua << "-- instances created\n";
         std::map<std::string, int> counters;
@@ -420,7 +410,6 @@ static std::string logToLua(const std::string& rawLog) {
         lua << "\n";
     }
 
-    // event connections
     if (!connections.empty()) {
         lua << "-- event connections\n";
         for (auto& c : connections) {
@@ -431,7 +420,6 @@ static std::string logToLua(const std::string& rawLog) {
         lua << "\n";
     }
 
-    // chat
     if (!chatMessages.empty()) {
         lua << "-- chat messages\n";
         for (auto& msg : chatMessages)
@@ -456,7 +444,6 @@ SandboxResult runSandboxDeobfuscate(const std::string& source) {
         return result;
     }
 
-    // write sandbox lua to temp
     char tempDir[MAX_PATH];
     GetTempPathA(MAX_PATH, tempDir);
 
