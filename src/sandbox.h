@@ -1,4 +1,3 @@
-// anyone can fork this as long as there is credit, the ai will not work on other forks.
 #pragma once
 #include <string>
 
