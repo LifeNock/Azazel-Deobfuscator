@@ -165,7 +165,12 @@ local function make_inst(class, user_new)
             end
         end
 
-        if k=="GetService" then return function(self,svc) log("GET_SERVICE",svc); return make_inst(svc) end
+        if k=="GetService" then return function(self,svc)
+            log("GET_SERVICE",svc)
+            if svc=="Players" then return _players end
+            if svc=="ReplicatedStorage" then return _replicatedStorage end
+            return make_inst(svc)
+        end
         elseif k=="HttpGet" or k=="GetAsync" then return function(self,url,...) log("HTTP_GET",url); return "" end
         elseif k=="PostAsync" then return function(self,url,body,...) log("HTTP_POST",url,tostring(body):sub(1,80)); return "" end
         elseif k=="SendAsync" then return function(self,msg,...) log("CHAT_SEND",tostring(msg)) end
@@ -283,11 +288,12 @@ static const char SANDBOX_LUA_B[] = R"SBB(
 game      = make_inst("DataModel")
 workspace = make_inst("Workspace")
 
-local _char     = make_inst("Model")
-local _lp       = make_inst("Player")
-local _players  = make_inst("Players")
-local _pgui     = make_inst("PlayerGui")
-local _backpack = make_inst("Backpack")
+local _char              = make_inst("Model")
+local _lp                = make_inst("Player")
+local _players           = make_inst("Players")
+local _pgui              = make_inst("PlayerGui")
+local _backpack          = make_inst("Backpack")
+local _replicatedStorage = make_inst("ReplicatedStorage")
 
 _lp.Name        = "TargetPlayer"
 _lp.UserId      = 12345678
@@ -500,13 +506,15 @@ static std::string toCamel(const std::string& s) {
 static std::string parentExpr(int pid, const std::string& pcls,
                                const std::map<int,InstData>& insts) {
     if (pid > 0 && insts.count(pid)) return insts.at(pid).varName;
-    if (pcls.find("PlayerGui")  != std::string::npos) return "lp.PlayerGui";
-    if (pcls.find("StarterGui") != std::string::npos) return "game:GetService(\"StarterGui\")";
-    if (pcls.find("CoreGui")    != std::string::npos) return "game:GetService(\"CoreGui\")";
+    if (pcls.find("PlayerGui")    != std::string::npos) return "lp.PlayerGui";
+    if (pcls.find("StarterGui")  != std::string::npos) return "game:GetService(\"StarterGui\")";
+    if (pcls.find("CoreGui")     != std::string::npos) return "game:GetService(\"CoreGui\")";
+    if (pcls.find("SoundService")!= std::string::npos) return "game:GetService(\"SoundService\")";
+    if (pcls.find("Lighting")    != std::string::npos) return "game:GetService(\"Lighting\")";
     if (pcls == "Model" || pcls.find("Character") != std::string::npos) return "character";
-    if (pcls.find("Player")    != std::string::npos) return "lp";
-    if (pcls == "DataModel")   return "game";
-    if (pcls == "Workspace")   return "workspace";
+    if (pcls.find("Player")      != std::string::npos) return "lp";
+    if (pcls == "DataModel")     return "game";
+    if (pcls == "Workspace" || pcls.find("Workspace") != std::string::npos) return "workspace";
     return "nil";
 }
 
