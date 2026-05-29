@@ -261,7 +261,7 @@ local function make_inst(class, user_new)
                 if ok2 and type(c2)=="string"  then pcls=c2 end
             end
             if LOGGING then log("PROP_PARENT", myid, pid, pcls) end
-            props["_parent"]=v; return
+            props["Parent"]=v; return
         end
         if LOGGING then
             if cb_depth==0 then log("PROP_SET", myid, k, tostring(v))
