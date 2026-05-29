@@ -6,222 +6,357 @@
 #include <vector>
 #include <set>
 #include <map>
+#include <algorithm>
 
 static const char* SANDBOX_LUA = R"SANDBOX(
 local LOG = {}
+local cb_depth = 0
+
 local function log(tag, ...)
     local args = {...}
     for i,v in ipairs(args) do args[i] = tostring(v) end
-    local msg = "[" .. tag .. "] " .. table.concat(args, " | ")
-    table.insert(LOG, msg)
+    table.insert(LOG, "[" .. tag .. "] " .. table.concat(args, "\t"))
 end
 
 local _real_load = load
-local _real_loadstring = loadstring
+local _real_io_open = io.open
 
-local function safe_loadstring(code, chunkname)
-    local codestr = tostring(code or "")
-    log("LOADSTRING", "len=" .. #codestr, "preview=" .. codestr:sub(1,120))
-    if #codestr < 4 then return function() return nil end end
-    local chunk, err = _real_load(codestr, chunkname or "loaded")
-    if not chunk then
-        log("LOADSTRING_COMPILE_ERR", tostring(err))
-        return function() return nil end
-    end
+local function safe_loadstring(code, name)
+    local s = tostring(code or "")
+    log("LOADSTRING", #s, s:sub(1,80))
+    if #s < 4 then return function() return nil end end
+    local chunk, err = _real_load(s, name or "loaded")
+    if not chunk then log("LOADSTRING_ERR", tostring(err)); return function() return nil end end
     return function(...)
-        local ok, result = pcall(chunk, ...)
-        if not ok then log("LOADSTRING_RUNTIME_ERR", tostring(result):sub(1,200)) end
-        return result
+        local ok, r = pcall(chunk, ...)
+        if not ok then log("LOADSTRING_RUNTIME_ERR", tostring(r):sub(1,200)) end
+        return r
     end
 end
 loadstring = safe_loadstring
 load = safe_loadstring
 
-local _real_io_open = io.open
-io.write = function(...) end
-io.open  = function(path, mode)
-    if mode and mode:find("w") then return nil, "blocked" end
-    return nil, "not allowed"
-end
-io.popen = function() return nil, "blocked" end
-os.execute = function(cmd) log("OS_EXEC_BLOCK", tostring(cmd)); return nil end
-os.remove  = function(f)   return nil end
-
-local _real_require = require
-require = function(name)
-    local safe = {math=true,string=true,table=true,io=true,os=true,bit=true,bit32=true,utf8=true}
-    if safe[name] then return _real_require(name) end
-    log("REQUIRE_BLOCK", tostring(name))
-    return {}
+io.write  = function() end
+io.open   = function(p,m) if m and m:find("w") then return nil,"blocked" end return nil,"not allowed" end
+io.popen  = function() return nil,"blocked" end
+os.execute = function(cmd) log("OS_EXEC", tostring(cmd)); return nil end
+os.remove  = function() return nil end
+require    = function(n)
+    local safe={math=true,string=true,table=true,io=true,os=true,bit=true,bit32=true,utf8=true}
+    if safe[n] then return _real_load("return require")()(n) end
+    log("REQUIRE_BLOCK", n); return {}
 end
 
-local function stub_val(name)
-    local t = {}
-    setmetatable(t, {
-        __call    = function(self,...) log("STUB_CALL",name,...); return stub_val(name.."()") end,
-        __index   = function(self,k)  return stub_val(name.."."..tostring(k)) end,
-        __newindex= function(self,k,v) rawset(self,k,v) end,
-        __tostring= function(self) return name end,
-        __len=function() return 0 end,
-        __add=function(a,b) return a end, __sub=function(a,b) return a end,
-        __mul=function(a,b) return a end, __div=function(a,b) return a end,
-        __unm=function(a) return a end,   __eq=function(a,b) return false end,
-        __lt=function(a,b) return false end, __le=function(a,b) return false end,
-        __concat=function(a,b) return tostring(a)..tostring(b) end,
-    })
-    return t
-end
-
-local function make_roblox_instance(class)
-    local inst = {ClassName=class}
-    local mt = {
-        __index = function(t,k)
-            if k=="GetService" then
-                return function(self,svc)
-                    log("GET_SERVICE",svc)
-                    local svcs={Players=Players_inst,Workspace=workspace,
-                        HttpService=HttpService,StarterGui=StarterGui,CoreGui=CoreGui}
-                    return svcs[svc] or make_roblox_instance(svc)
-                end
-            elseif k=="HttpGet" then
-                return function(self,url,...) log("HTTP_GET",url); return "" end
-            elseif k=="GetAsync" then
-                return function(self,url,...) log("HTTP_GET_ASYNC",url); return "" end
-            elseif k=="PostAsync" or k=="SendAsync" then
-                return function(self,url,body,...)
-                    log("HTTP_POST",url,tostring(body):sub(1,200)); return ""
-                end
-            elseif k=="WaitForChild" then
-                return function(self,name,...) log("WAIT_FOR_CHILD",class,name); return make_roblox_instance(name) end
-            elseif k=="FindFirstChild" then
-                return function(self,name,...) return make_roblox_instance(name) end
-            elseif k=="FindFirstChildOfClass" then
-                return function(self,cls,...) return make_roblox_instance(cls) end
-            elseif k=="GetChildren" or k=="GetDescendants" then
-                return function(self) return {} end
-            elseif k=="IsDescendantOf" then return function() return false end
-            elseif k=="IsA" then return function(self,cls) return self.ClassName==cls end
-            elseif k=="Connect" or k=="connect" then
-                return function(self,fn) log("CONNECT",class,k); return {Disconnect=function() end} end
-            elseif k=="Disconnect" then return function() end
-            elseif k=="Fire" or k=="FireServer" or k=="FireClient" then
-                return function(self,...) log("REMOTE_FIRE",...) end
-            elseif k=="Invoke" or k=="InvokeServer" then
-                return function(self,...) log("REMOTE_INVOKE",...); return nil end
-            elseif k=="Kick" then return function(self,msg) log("KICK",tostring(msg)) end
-            elseif k=="BreakJoints" then return function(self) log("BREAK_JOINTS",class) end
-            elseif k=="SetStateEnabled" then
-                return function(self,state,en) log("SET_STATE",tostring(state),tostring(en)) end
-            elseif k=="Destroy" then return function(self) end
-            elseif k=="MoveTo" then return function(self,pos) end
-            elseif k=="Clone" then return function(self) return make_roblox_instance(class) end
-            elseif k=="GetPlayingAnimationTracks" then return function() return {} end
-            elseif k=="SetAttribute" or k=="GetAttribute" then return function() return nil end
-            elseif k=="new" then
-                return function(...)
-                    log("INSTANCE_NEW",...)
-                    return make_roblox_instance(tostring(...))
-                end
-            else return stub_val(class.."."..tostring(k)) end
-        end,
-        __newindex=function(t,k,v) rawset(t,k,v) end,
-        __tostring=function(t) return "RobloxInstance<"..t.ClassName..">" end,
-        __call=function(t,...) log("INSTANCE_CALL",t.ClassName,...); return make_roblox_instance(t.ClassName) end,
-        __len=function() return 0 end,
-        __add=function(a,b) return a end, __mul=function(a,b) return a end,
-        __concat=function(a,b) return tostring(a)..tostring(b) end,
-    }
-    setmetatable(inst,mt)
-    return inst
-end
-
-game=make_roblox_instance("DataModel")
-workspace=make_roblox_instance("Workspace")
-local Character=make_roblox_instance("Model")
-local LocalPlayer=make_roblox_instance("Player")
-rawset(LocalPlayer,"Name","TargetPlayer")
-rawset(LocalPlayer,"UserId",12345678)
-rawset(LocalPlayer,"Character",Character)
-rawset(LocalPlayer,"PlayerGui",make_roblox_instance("PlayerGui"))
-rawset(LocalPlayer,"Backpack",make_roblox_instance("Backpack"))
-rawset(LocalPlayer,"RespawnTime",5)
-rawset(LocalPlayer,"GetMouse",function(self) return make_roblox_instance("Mouse") end)
-local Players_inst=make_roblox_instance("Players")
-rawset(Players_inst,"LocalPlayer",LocalPlayer)
-rawset(Players_inst,"GetPlayers",function(self) return {LocalPlayer} end)
-rawset(Players_inst,"GetPlayerFromCharacter",function(self,c) return LocalPlayer end)
-Players=Players_inst
-script=make_roblox_instance("LocalScript")
-shared={}
-_G={}
-Vector3={new=function(x,y,z) return {x=x or 0,y=y or 0,z=z or 0} end,fromNormalId=function(...) return Vector3.new() end}
-Vector2={new=function(x,y) return {x=x or 0,y=y or 0} end}
-CFrame={new=function(...) return setmetatable({},{__mul=function(a,b) return a end,__add=function(a,b) return a end}) end,Angles=function(...) return CFrame.new() end,lookAt=function(...) return CFrame.new() end}
-Color3={new=function(r,g,b) return {r=r or 0,g=g or 0,b=b or 0} end,fromRGB=function(r,g,b) return Color3.new(r/255,g/255,b/255) end}
-UDim2={new=function(...) return {} end}
-UDim={new=function(...) return {} end}
-TweenInfo={new=function(...) return {} end}
-Enum=setmetatable({},{__index=function(t,k) return setmetatable({},{__index=function(t2,k2) return {Name=k2,Value=0} end}) end})
-Instance={new=function(cls,parent) log("INSTANCE_NEW",cls); return make_roblox_instance(cls) end}
-NumberSequenceKeypoint={new=function(...) return {} end}
-ColorSequenceKeypoint={new=function(...) return {} end}
-NumberSequence={new=function(...) return {} end}
-ColorSequence={new=function(...) return {} end}
-PhysicalProperties={new=function(...) return {} end}
-BodyVelocity={new=function() return make_roblox_instance("BodyVelocity") end}
-BodyGyro={new=function() return make_roblox_instance("BodyGyro") end}
-BodyPosition={new=function() return make_roblox_instance("BodyPosition") end}
-BodyAngularVelocity={new=function() return make_roblox_instance("BodyAngularVelocity") end}
-AlignPosition={new=function() return make_roblox_instance("AlignPosition") end}
-AlignOrientation={new=function() return make_roblox_instance("AlignOrientation") end}
-Attachment={new=function() return make_roblox_instance("Attachment") end}
-RaycastParams={new=function() return make_roblox_instance("RaycastParams") end}
-StarterGui=make_roblox_instance("StarterGui")
-CoreGui=make_roblox_instance("CoreGui")
-task={
-    spawn=function(fn,...) local ok,err=pcall(fn,...) end,
-    wait=function(t) return t or 0 end,
-    delay=function(t,fn) return {} end,
-    cancel=function(t) end,
+Color3 = {
+    new = function(r,g,b)
+        r,g,b = (r or 0)*255,(g or 0)*255,(b or 0)*255
+        return setmetatable({r=r,g=g,b=b},{__tostring=function(s) return ("Color3.fromRGB(%g,%g,%g)"):format(s.r,s.g,s.b) end})
+    end,
+    fromRGB = function(r,g,b)
+        return setmetatable({r=r or 0,g=g or 0,b=b or 0},{__tostring=function(s) return ("Color3.fromRGB(%g,%g,%g)"):format(s.r,s.g,s.b) end})
+    end,
+    fromHSV = function(h,s,v)
+        return setmetatable({},{__tostring=function() return ("Color3.fromHSV(%g,%g,%g)"):format(h or 0,s or 0,v or 0) end})
+    end,
 }
-wait=function(t) return t or 0 end
-spawn=function(fn) end
-delay=function(t,fn) end
-HttpService=make_roblox_instance("HttpService")
-newproxy=function(mt) return setmetatable({},mt and {} or nil) end
+UDim2 = {new=function(xs,xo,ys,yo)
+    return setmetatable({xs=xs or 0,xo=xo or 0,ys=ys or 0,yo=yo or 0},{
+        __tostring=function(s) return ("UDim2.new(%g,%g,%g,%g)"):format(s.xs,s.xo,s.ys,s.yo) end,
+        __add=function(a,b) return a end, __sub=function(a,b) return a end,
+    })
+end}
+UDim = {new=function(s,o)
+    return setmetatable({s=s or 0,o=o or 0},{__tostring=function(self) return ("UDim.new(%g,%g)"):format(self.s,self.o) end})
+end}
+Vector3 = {
+    new=function(x,y,z) return setmetatable({x=x or 0,y=y or 0,z=z or 0},{
+        __tostring=function(s) return ("Vector3.new(%g,%g,%g)"):format(s.x,s.y,s.z) end,
+        __add=function(a,b) return a end,__sub=function(a,b) return a end,
+        __mul=function(a,b) return a end,__unm=function(a) return a end,
+        __index=function(t,k) return 0 end,
+    }) end,
+    fromNormalId=function() return Vector3.new() end,
+    zero=setmetatable({x=0,y=0,z=0},{__tostring=function() return "Vector3.zero" end}),
+    one=setmetatable({x=1,y=1,z=1},{__tostring=function() return "Vector3.one" end}),
+}
+Vector2 = {new=function(x,y) return setmetatable({x=x or 0,y=y or 0},{
+    __tostring=function(s) return ("Vector2.new(%g,%g)"):format(s.x,s.y) end,
+    __add=function(a,b) return a end,__sub=function(a,b) return a end,
+    __index=function(t,k) return 0 end,
+}) end}
+CFrame = {
+    new=function(...)
+        local a,p={...},{}; for _,v in ipairs(a) do p[#p+1]=tostring(v) end
+        local r="CFrame.new("..table.concat(p,",")..")"
+        return setmetatable({},{__tostring=function() return r end,
+            __mul=function(a,b) return a end,__add=function(a,b) return a end,
+            __index=function(t,k) return setmetatable({},{__tostring=function() return r.."."..k end,__call=function() return CFrame.new() end}) end})
+    end,
+    Angles=function(...) return CFrame.new() end,
+    lookAt=function(...) return CFrame.new() end,
+    fromEulerAnglesXYZ=function(...) return CFrame.new() end,
+}
+TweenInfo = {new=function(t,es,ed,rc,rev,dt)
+    return setmetatable({t=t,es=es,ed=ed,rc=rc,rev=rev,dt=dt},{
+        __tostring=function(s) return ("TweenInfo.new(%g,%s,%s,%g,%s,%g)"):format(
+            s.t or 0,tostring(s.es),tostring(s.ed),s.rc or 0,tostring(s.rev or false),s.dt or 0) end
+    })
+end}
+Enum = setmetatable({},{__index=function(t,k)
+    return setmetatable({},{__index=function(t2,k2)
+        return setmetatable({Name=k2,Value=0},{
+            __tostring=function() return "Enum."..k.."."..k2 end,
+            __eq=function(a,b) return rawequal(a,b) end,
+        })
+    end})
+end})
+NumberSequenceKeypoint={new=function(t,v,e) return setmetatable({},{__tostring=function() return ("NumberSequenceKeypoint.new(%g,%g,%g)"):format(t or 0,v or 0,e or 0) end}) end}
+ColorSequenceKeypoint={new=function(t,c) return setmetatable({},{__tostring=function() return ("ColorSequenceKeypoint.new(%g,%s)"):format(t or 0,tostring(c)) end}) end}
+NumberSequence={new=function(v)
+    if type(v)=="table" then local p={} for _,k in ipairs(v) do p[#p+1]=tostring(k) end
+        return setmetatable({},{__tostring=function() return "NumberSequence.new({"..table.concat(p,",").."}" end}) end
+    return setmetatable({},{__tostring=function() return "NumberSequence.new("..tostring(v)..")" end})
+end}
+ColorSequence={new=function(v)
+    if type(v)=="table" then local p={} for _,k in ipairs(v) do p[#p+1]=tostring(k) end
+        return setmetatable({},{__tostring=function() return "ColorSequence.new({"..table.concat(p,",").."}" end}) end
+    return setmetatable({},{__tostring=function() return "ColorSequence.new("..tostring(v)..")" end})
+end}
+PhysicalProperties={new=function(...) local a,p={...},{} for _,v in ipairs(a) do p[#p+1]=tostring(v) end
+    return setmetatable({},{__tostring=function() return "PhysicalProperties.new("..table.concat(p,",")..")" end}) end}
+BrickColor={new=function(v) return setmetatable({},{__tostring=function() return 'BrickColor.new('..tostring(v)..')' end}) end,
+    White=function() return BrickColor.new("White") end}
 
-io.write=function(...) end
-local script_path=arg and arg[1] or ""
-local f,err=_real_io_open(script_path,"r")
-if not f then
-    print("ERROR: " .. tostring(err))
-    os.exit(1)
+local inst_counter = 0
+local LOGGING = false
+
+local function make_inst(class, user_new)
+    inst_counter = inst_counter + 1
+    local myid = inst_counter
+    if LOGGING and user_new then log("INST_NEW", myid, class) end
+    local props = {ClassName=class, _id=myid}
+    local proxy = {}
+    local mt = {}
+
+    mt.__index = function(t, k)
+        if props[k] ~= nil then return props[k] end
+        if k == "_id"       then return myid end
+        if k == "ClassName" then return class end
+
+        if class == "TweenService" and k == "Create" then
+            return function(self, inst, info, ptbl)
+                local iid = (type(inst)=="table") and (pcall(function() return inst._id end) and inst._id or 0) or 0
+                local pp={}
+                if type(ptbl)=="table" then for pk,pv in pairs(ptbl) do pp[#pp+1]=tostring(pk).."="..tostring(pv) end end
+                log("TWEEN_CREATE", iid, tostring(info), table.concat(pp,";"))
+                local tw = make_inst("Tween")
+                rawset(tw,"Play",function(s2) log("TWEEN_PLAY",iid) end)
+                rawset(tw,"Cancel",function() end)
+                return tw
+            end
+        end
+
+        if k=="GetService" then return function(self,svc) log("GET_SERVICE",svc); return make_inst(svc) end
+        elseif k=="HttpGet" or k=="GetAsync" then return function(self,url,...) log("HTTP_GET",url); return "" end
+        elseif k=="PostAsync" then return function(self,url,body,...) log("HTTP_POST",url,tostring(body):sub(1,80)); return "" end
+        elseif k=="SendAsync" then return function(self,msg,...) log("CHAT_SEND",tostring(msg)) end
+        elseif k=="WaitForChild" then return function(self,name,t2) log("WAIT_FOR_CHILD",class,name); return make_inst(name) end
+        elseif k=="FindFirstChild" or k=="FindFirstChildOfClass" or k=="FindFirstChildWhichIsA" then
+            return function(self,name,...) return make_inst(name) end
+        elseif k=="FindFirstAncestorOfClass" or k=="FindFirstAncestor" then
+            return function(self,name,...) return make_inst(name) end
+        elseif k=="GetChildren" or k=="GetDescendants" then return function() return {} end
+        elseif k=="GetPlayers" then return function() return {} end
+        elseif k=="GetPlayingAnimationTracks" then return function() return {} end
+        elseif k=="GetMouse" then return function() return make_inst("Mouse") end
+        elseif k=="IsDescendantOf" or k=="IsAncestorOf" then return function() return false end
+        elseif k=="IsA" then return function(self,cls) return class==cls end
+        elseif k=="Connect" or k=="connect" then
+            return function(self, fn)
+                log("CONNECT_BEGIN", myid, class, "?")
+                if type(fn)=="function" then
+                    cb_depth=cb_depth+1
+                    pcall(fn, make_inst("InputObject"), false)
+                    cb_depth=cb_depth-1
+                end
+                log("CONNECT_END", myid, "?")
+                return {Disconnect=function() end}
+            end
+        elseif k=="Wait" then return function() return make_inst(class.."_w") end
+        elseif k=="Fire" or k=="FireServer" or k=="FireClient" or k=="FireAllClients" then
+            return function(self,...)
+                local p={}; for _,v in ipairs({...}) do p[#p+1]=tostring(v) end
+                log("REMOTE_FIRE", table.unpack(p))
+            end
+        elseif k=="Invoke" or k=="InvokeServer" then return function(self,...) log("REMOTE_INVOKE",...); return nil end
+        elseif k=="Kick" then return function(self,msg) log("KICK",tostring(msg)) end
+        elseif k=="BreakJoints" then return function() log("BREAK_JOINTS",class) end
+        elseif k=="SetStateEnabled" then return function(self,s,e) log("SET_STATE",tostring(s),tostring(e)) end
+        elseif k=="Destroy" then return function() log("DESTROY",myid,class) end
+        elseif k=="MoveTo" then return function() end
+        elseif k=="Clone" then return function() return make_inst(class) end
+        elseif k=="SetAttribute" or k=="RemoveAttribute" then return function() end
+        elseif k=="GetAttribute" then return function() return nil end
+        elseif k=="GetPropertyChangedSignal" then return function(self,p2) return make_inst("Signal_"..p2) end
+        elseif k=="Play" then return function() log("PLAY",myid,class) end
+        elseif k=="Stop" or k=="Pause" or k=="Remove" then return function() end
+        elseif k=="LoadAnimation" then return function() return make_inst("AnimationTrack") end
+        elseif k=="Lerp" then return function(self,...) return self end
+        elseif k=="Disconnect" then return function() end
+        elseif k=="SetCore" or k=="GetCore" or k=="SetCoreGuiEnabled" then return function() end
+        elseif k=="new" then return function(...) return make_inst(tostring(...)) end
+        else
+            local sig = k
+            return setmetatable({},{
+                __index = function(s2, k2)
+                    if k2=="Connect" or k2=="connect" or k2=="Once" then
+                        return function(s3, fn)
+                            log("CONNECT_BEGIN", myid, sig)
+                            if type(fn)=="function" then
+                                cb_depth=cb_depth+1
+                                pcall(fn, make_inst("InputObject"), false)
+                                cb_depth=cb_depth-1
+                            end
+                            log("CONNECT_END", myid, sig)
+                            return {Disconnect=function() end}
+                        end
+                    elseif k2=="Wait" then return function() return make_inst(sig.."_w") end
+                    end
+                    return make_inst(class.."."..sig.."."..k2)
+                end,
+                __call=function(s2,...) log("STUB_CALL",class.."."..sig,...); return make_inst(sig.."_r") end,
+                __newindex=function(s2,k2,v) rawset(s2,k2,v) end,
+                __tostring=function() return class.."."..sig end,
+                __len=function() return 0 end,
+                __add=function(a,b) return a end,
+                __concat=function(a,b) return tostring(a)..tostring(b) end,
+                __eq=function(a,b) return rawequal(a,b) end,
+                __lt=function() return false end, __le=function() return false end,
+            })
+        end
+    end
+
+    mt.__newindex = function(t, k, v)
+        if k == "Parent" then
+            local pid,pcls = 0,"?"
+            if type(v)=="table" then
+                local ok1,id1 = pcall(function() return v._id end)
+                if ok1 and type(id1)=="number" then pid=id1 end
+                local ok2,c2  = pcall(function() return v.ClassName end)
+                if ok2 and type(c2)=="string"  then pcls=c2 end
+            end
+            if LOGGING then log("PROP_PARENT", myid, pid, pcls) end
+            props["_parent"]=v; return
+        end
+        if LOGGING then
+            if cb_depth==0 then log("PROP_SET", myid, k, tostring(v))
+            else               log("CB_PROP_SET", myid, k, tostring(v)) end
+        end
+        props[k]=v
+    end
+
+    mt.__tostring = function() return "RobloxInstance<"..class..":"..myid..">" end
+    mt.__call=function(t,...) log("INST_CALL",myid,class,...); return make_inst(class) end
+    mt.__len=function() return 0 end
+    mt.__add=function(a,b) return a end
+    mt.__mul=function(a,b) return a end
+    mt.__concat=function(a,b) return tostring(a)..tostring(b) end
+    mt.__eq=function(a,b) return rawequal(a,b) end
+    mt.__lt=function() return false end
+    mt.__le=function() return false end
+
+    setmetatable(proxy, mt)
+    return proxy
 end
-local source=f:read("*a")
-f:close()
-unpack=table.unpack
-getfenv=function(level) return _ENV end
-setfenv=function(level,env) end
+
+game      = make_inst("DataModel")
+workspace = make_inst("Workspace")
+
+local _char     = make_inst("Model")
+local _lp       = make_inst("Player")
+local _players  = make_inst("Players")
+local _pgui     = make_inst("PlayerGui")
+local _backpack = make_inst("Backpack")
+
+_lp.Name        = "TargetPlayer"
+_lp.UserId      = 12345678
+_lp.Character   = _char
+_lp.PlayerGui   = _pgui
+_lp.Backpack    = _backpack
+_lp.RespawnTime = 5
+_players.LocalPlayer = _lp
+_players.RespawnTime = 5
+_char.Name = "TargetPlayer"
+
+Players = _players
+script  = make_inst("LocalScript")
+shared  = {}
+_G      = {}
+
+task = {
+    spawn  = function(fn,...) if type(fn)=="function" then pcall(fn,...) end end,
+    wait   = function(t) return t or 0 end,
+    delay  = function(t,fn,...) end,
+    cancel = function() end,
+    defer  = function(fn,...) if type(fn)=="function" then pcall(fn,...) end end,
+}
+wait   = function(t) return t or 0 end
+spawn  = function(fn,...) if type(fn)=="function" then pcall(fn,...) end end
+delay  = function(t,fn,...) end
+
+coroutine = {
+    wrap   = function(fn) return function(...) local ok,r=pcall(fn,...); return r end end,
+    create = function(fn) return fn end,
+    resume = function(co,...) if type(co)=="function" then return pcall(co,...) end return true end,
+    yield  = function(...) return ... end,
+    status = function() return "dead" end,
+    isyieldable = function() return false end,
+    running = function() return nil,true end,
+}
+
+getfenv  = function() return _ENV end
+setfenv  = function() end
+unpack   = table.unpack
+newproxy = function(mt) return setmetatable({},mt and {} or nil) end
+rawlen   = rawlen or function(t) return #t end
+
 if not bit32 then
     bit32={
-        bxor=function(a,b) return a~b end,
-        band=function(a,b) return a&b end,
-        bor=function(a,b) return a|b end,
-        bnot=function(a) return ~a end,
-        rshift=function(a,b) return a>>b end,
-        lshift=function(a,b) return a<<b end,
+        bxor=function(a,b) return a~b end, band=function(a,b) return a&b end,
+        bor=function(a,b) return a|b end,  bnot=function(a) return ~a end,
+        rshift=function(a,b) return a>>b end, lshift=function(a,b) return a<<b end,
+        arshift=function(a,b) return a>>b end,
+        btest=function(...) return false end,
+        rol=function(a,b) return a end, ror=function(a,b) return a end,
     }
 end
-local chunk,compile_err=_real_load(source,"script")
-if not chunk then
-    local compat="getfenv=function(l)return _ENV or {} end\nsetfenv=function(l,e) end\nunpack=table.unpack\n"
-    chunk,compile_err=_real_load(compat..source,"script_compat")
+
+Instance = {new=function(cls,parent)
+    local inst = make_inst(cls, true)
+    if parent then inst.Parent = parent end
+    return inst
+end}
+
+LOGGING = true
+
+local _path = arg and arg[1] or ""
+local _f, _e = _real_io_open(_path, "r")
+if not _f then print("ERROR: "..tostring(_e)); os.exit(1) end
+local _src = _f:read("*a")
+_f:close()
+
+local _chunk, _cerr = _real_load(_src, "script")
+if not _chunk then
+    local compat = "getfenv=function()return _ENV end\nsetfenv=function()end\nunpack=table.unpack\n"
+    _chunk, _cerr = _real_load(compat.._src, "script_compat")
 end
-if chunk then
-    local ok,runtime_err=pcall(chunk)
+if _chunk then
+    local ok, rerr = pcall(_chunk)
+    if not ok then log("RUNTIME_ERROR", tostring(rerr):sub(1,300)) end
 end
+
 print("=== SANDBOX LOG ===")
-for _,entry in ipairs(LOG) do print(entry) end
+for _, e in ipairs(LOG) do print(e) end
 print("=== END LOG ===")
 )SANDBOX";
 
@@ -289,6 +424,21 @@ static std::string trim(const std::string& s) {
     return (a == std::string::npos) ? "" : s.substr(a, b - a + 1);
 }
 
+static std::vector<std::string> splitTab(const std::string& s, int maxParts = 99) {
+    std::vector<std::string> parts;
+    size_t pos = 0;
+    int splits = 0;
+    while (splits < maxParts - 1) {
+        size_t found = s.find('\t', pos);
+        if (found == std::string::npos) break;
+        parts.push_back(trim(s.substr(pos, found - pos)));
+        pos = found + 1;
+        splits++;
+    }
+    parts.push_back(trim(s.substr(pos)));
+    return parts;
+}
+
 static std::vector<std::string> splitPipe(const std::string& s) {
     std::vector<std::string> parts;
     std::istringstream ss(s);
@@ -298,50 +448,151 @@ static std::vector<std::string> splitPipe(const std::string& s) {
     return parts;
 }
 
+struct PropKV { std::string key, value; };
+
+struct InstData {
+    int id = 0;
+    std::string cls;
+    std::vector<PropKV> props;
+    std::set<std::string> seenProps;
+    int parentId = 0;
+    std::string parentClass;
+    std::string varName;
+    bool isUserCreated = false;
+
+    void addProp(const std::string& k, const std::string& v) {
+        if (!seenProps.count(k)) {
+            seenProps.insert(k);
+            props.push_back({k, v});
+        }
+    }
+    std::string getProp(const std::string& k) const {
+        for (auto& p : props) if (p.key == k) return p.value;
+        return "";
+    }
+};
+
+static std::string toCamel(const std::string& s) {
+    if (s.empty()) return "inst";
+    std::string r;
+    r += (char)tolower((unsigned char)s[0]);
+    r += s.substr(1);
+    std::string safe;
+    for (char c : r) safe += (isalnum((unsigned char)c) || c == '_') ? c : '_';
+    if (safe.empty() || isdigit((unsigned char)safe[0])) safe = "_" + safe;
+    return safe;
+}
+
+static std::string parentExpr(int pid, const std::string& pcls,
+                               const std::map<int,InstData>& insts) {
+    if (pid > 0 && insts.count(pid)) return insts.at(pid).varName;
+    if (pcls == "PlayerGui")       return "lp.PlayerGui";
+    if (pcls == "Model")           return "character";
+    if (pcls == "Player")          return "lp";
+    if (pcls == "DataModel")       return "game";
+    if (pcls == "Workspace")       return "workspace";
+    if (pcls == "StarterGui")      return "game:GetService(\"StarterGui\")";
+    if (pcls == "CoreGui")         return "game:GetService(\"CoreGui\")";
+    return "nil";
+}
+
+static std::string quoteVal(const std::string& v) {
+    if (v == "true" || v == "false") return v;
+    if (!v.empty() && (isdigit((unsigned char)v[0]) || v[0] == '-')) {
+        bool isNum = true;
+        for (size_t i = (v[0]=='-'?1:0); i < v.size(); i++)
+            if (!isdigit((unsigned char)v[i]) && v[i] != '.') { isNum = false; break; }
+        if (isNum) return v;
+    }
+    if (v.find("Color3.") == 0 || v.find("UDim2.") == 0 || v.find("UDim.") == 0 ||
+        v.find("Vector3.") == 0 || v.find("Vector2.") == 0 || v.find("CFrame.") == 0 ||
+        v.find("TweenInfo.") == 0 || v.find("Enum.") == 0 || v.find("Number") == 0 ||
+        v.find("Color") == 0 || v.find("BrickColor") == 0 || v.find("Physical") == 0)
+        return v;
+    std::string esc;
+    esc += '"';
+    for (char c : v) {
+        if (c == '"') esc += "\\\"";
+        else if (c == '\\') esc += "\\\\";
+        else if (c == '\n') esc += "\\n";
+        else esc += c;
+    }
+    esc += '"';
+    return esc;
+}
+
 static std::string logToLua(const std::string& rawLog) {
     std::istringstream stream(rawLog);
     std::string line;
-
     bool inLog = false;
+
     std::vector<std::string> services;
-    std::set<std::string>    seenSvc;
+    std::set<std::string> seenSvc;
     std::vector<std::string> remoteFires;
-    std::string              remoteEventName;
-    std::string              remoteEventRaw;
+    std::string remoteEventName, remoteEventRaw;
     std::vector<std::string> httpUrls;
-    int                      loadstringCount = 0;
-    std::vector<std::string> instances;
-    std::vector<std::string> connections;
+    int loadstringCount = 0;
+    std::map<int, InstData> insts;
+    std::vector<int> instOrder;
+    std::set<std::string> seenWFC;
+
+    struct TweenEntry { int instId; std::string info, props; };
+    std::vector<TweenEntry> tweens;
     std::vector<std::string> chatMessages;
-    std::set<std::string>    seenWFC;
+
+    struct ConnEntry { int instId; std::string signal; };
+    std::vector<ConnEntry> connections;
 
     while (std::getline(stream, line)) {
         line = trim(line);
         if (line == "=== SANDBOX LOG ===") { inLog = true; continue; }
-        if (line == "=== END LOG ===")      { inLog = false; continue; }
-        if (!inLog || line.empty())          continue;
+        if (line == "=== END LOG ===")     { inLog = false; continue; }
+        if (!inLog || line.empty()) continue;
 
-        if (line.size() > 14 && line.substr(0, 14) == "[GET_SERVICE] ") {
-            std::string svc = line.substr(14);
-            if (!seenSvc.count(svc)) { seenSvc.insert(svc); services.push_back(svc); }
-        } else if (line.size() > 14 && line.substr(0, 14) == "[REMOTE_FIRE] ") {
-            auto parts = splitPipe(line.substr(14));
-            if (!parts.empty()) {
-                if (remoteEventName.empty()) remoteEventName = "cmd";
-                remoteFires.push_back(line.substr(14));
-            }
-        } else if (line.size() > 11 && line.substr(0, 11) == "[HTTP_GET] ") {
-            httpUrls.push_back(line.substr(11));
-        } else if (line.size() > 17 && line.substr(0, 17) == "[HTTP_GET_ASYNC] ") {
-            httpUrls.push_back(line.substr(17));
-        } else if (line.size() > 13 && line.substr(0, 13) == "[LOADSTRING] ") {
+        if (line.size() < 2 || line[0] != '[') continue;
+        size_t rbr = line.find("] ");
+        if (rbr == std::string::npos) continue;
+        std::string tag  = line.substr(1, rbr - 1);
+        std::string body = line.substr(rbr + 2);
+
+        auto parts = splitTab(body);
+
+        if (tag == "GET_SERVICE") {
+            if (!seenSvc.count(body)) { seenSvc.insert(body); services.push_back(body); }
+        } else if (tag == "REMOTE_FIRE") {
+            if (!parts.empty()) remoteFires.push_back(body);
+        } else if (tag == "HTTP_GET") {
+            httpUrls.push_back(body);
+        } else if (tag == "LOADSTRING") {
             loadstringCount++;
-        } else if (line.size() > 15 && line.substr(0, 15) == "[INSTANCE_NEW] ") {
-            instances.push_back(line.substr(15));
-        } else if (line.size() > 17 && line.substr(0, 17) == "[WAIT_FOR_CHILD] ") {
-            auto parts = splitPipe(line.substr(17));
+        } else if (tag == "INST_NEW") {
             if (parts.size() >= 2) {
-                std::string entry = parts[0] + " -> " + parts[1];
+                int id = std::stoi(parts[0]);
+                InstData d; d.id = id; d.cls = parts[1]; d.isUserCreated = true;
+                insts[id] = d;
+                instOrder.push_back(id);
+            }
+        } else if (tag == "PROP_SET") {
+            if (parts.size() >= 3) {
+                int id = std::stoi(parts[0]);
+                if (insts.count(id)) {
+                    std::string val = parts[2];
+                    for (size_t i = 3; i < parts.size(); i++) val += "\t" + parts[i];
+                    insts[id].addProp(parts[1], val);
+                }
+            }
+        } else if (tag == "PROP_PARENT") {
+            if (parts.size() >= 3) {
+                int id = std::stoi(parts[0]);
+                int pid = std::stoi(parts[1]);
+                if (insts.count(id)) {
+                    insts[id].parentId    = pid;
+                    insts[id].parentClass = parts[2];
+                }
+            }
+        } else if (tag == "WAIT_FOR_CHILD") {
+            if (parts.size() >= 2) {
+                std::string entry = parts[0] + "->" + parts[1];
                 if (!seenWFC.count(entry)) {
                     seenWFC.insert(entry);
                     if (remoteEventName.empty() && parts[0] == "ReplicatedStorage") {
@@ -355,44 +606,73 @@ static std::string logToLua(const std::string& rawLog) {
                     }
                 }
             }
-        } else if (line.size() > 12 && line.substr(0, 12) == "[STUB_CALL] ") {
-            std::string body = line.substr(12);
-            if (body.find("SendAsync") != std::string::npos) {
-                size_t last = body.rfind(" | ");
-                if (last != std::string::npos) chatMessages.push_back(body.substr(last + 3));
-            } else if (body.find(".Connect") != std::string::npos || body.find("Connect") != std::string::npos) {
-                size_t pipe = body.find(" | ");
-                std::string chain = (pipe != std::string::npos) ? body.substr(0, pipe) : body;
-                connections.push_back(chain);
+        } else if (tag == "TWEEN_CREATE") {
+            if (parts.size() >= 3) {
+                TweenEntry te;
+                te.instId = std::stoi(parts[0]);
+                te.info   = parts[1];
+                te.props  = parts[2];
+                tweens.push_back(te);
             }
-        } else if (line.size() > 9 && line.substr(0, 9) == "[CONNECT]") {
-            auto parts = splitPipe(line.substr(9));
-            if (parts.size() >= 2) connections.push_back(parts[0] + "." + parts[1]);
+        } else if (tag == "CHAT_SEND") {
+            chatMessages.push_back(body);
+        } else if (tag == "CONNECT_BEGIN") {
+            if (parts.size() >= 2) {
+                ConnEntry ce;
+                ce.instId = std::stoi(parts[0]);
+                ce.signal = parts[1];
+                connections.push_back(ce);
+            }
         }
     }
 
+    std::map<std::string, int> nameCounters;
+    for (int id : instOrder) {
+        if (!insts.count(id)) continue;
+        auto& d = insts[id];
+        std::string base = d.getProp("Name");
+        if (base.empty()) base = d.cls;
+        std::string camel = toCamel(base);
+        nameCounters[camel]++;
+        if (nameCounters[camel] == 1) {
+            d.varName = camel;
+        } else {
+            d.varName = camel + "_" + std::to_string(nameCounters[camel] - 1);
+        }
+    }
+
+    std::map<std::string, int> usedNames;
+    for (int id : instOrder) {
+        if (!insts.count(id)) continue;
+        auto& d = insts[id];
+        std::string base = d.getProp("Name");
+        if (base.empty()) base = d.cls;
+        std::string camel = toCamel(base);
+        usedNames[camel]++;
+        if (usedNames[camel] == 1) d.varName = camel;
+        else d.varName = camel + "_" + std::to_string(usedNames[camel]);
+    }
+
     std::ostringstream lua;
-    lua << "-- deobfuscated by lifenock\n";
     lua << "-- Unobfuscated By Azazel Deobfuscator\n\n";
 
     if (!services.empty()) {
-        lua << "-- services\n";
         for (auto& s : services)
             lua << "local " << s << " = game:GetService(\"" << s << "\")\n";
-        lua << "\n";
+        lua << "\nlocal lp = Players.LocalPlayer\n\n";
     }
 
     if (!remoteFires.empty()) {
         if (remoteEventName.empty()) { remoteEventName = "remote"; remoteEventRaw = "remote"; }
-        lua << "-- remote events\n";
-        lua << "local " << remoteEventName << " = ReplicatedStorage:WaitForChild(\""
+        lua << "local " << remoteEventName
+            << " = game:GetService(\"ReplicatedStorage\"):WaitForChild(\""
             << remoteEventRaw << "\")\n";
         for (auto& f : remoteFires) {
-            auto parts = splitPipe(f);
+            auto fp = splitTab(f);
             lua << remoteEventName << ":FireServer(";
-            for (size_t i = 0; i < parts.size(); i++) {
+            for (size_t i = 0; i < fp.size(); i++) {
                 if (i) lua << ", ";
-                lua << "\"" << parts[i] << "\"";
+                lua << quoteVal(fp[i]);
             }
             lua << ")\n";
         }
@@ -400,50 +680,70 @@ static std::string logToLua(const std::string& rawLog) {
     }
 
     if (!httpUrls.empty()) {
-        lua << "-- http / loadstring\n";
         for (size_t i = 0; i < httpUrls.size(); i++) {
-            lua << "local payload_" << (i + 1) << " = game:GetService(\"HttpService\"):GetAsync(\""
-                << httpUrls[i] << "\")\n";
+            if (loadstringCount > 0 && i == 0)
+                lua << "loadstring(game:HttpGet(\"" << httpUrls[i] << "\"))()\n";
+            else
+                lua << "-- game:HttpGet(\"" << httpUrls[i] << "\")\n";
         }
-        if (loadstringCount > 0)
-            lua << "loadstring(payload_1)()\n";
         lua << "\n";
     }
 
-    if (!instances.empty()) {
-        lua << "-- instances created\n";
-        std::map<std::string, int> counters;
-        for (auto& cls : instances) {
-            counters[cls]++;
-            std::string var = cls;
-            if (!var.empty()) var[0] = (char)tolower((unsigned char)var[0]);
-            if (counters[cls] > 1) var += "_" + std::to_string(counters[cls]);
-            lua << "local " << var << " = Instance.new(\"" << cls << "\")\n";
+    if (!instOrder.empty()) {
+        for (int id : instOrder) {
+            if (!insts.count(id)) continue;
+            auto& d = insts[id];
+            lua << "local " << d.varName << " = Instance.new(\"" << d.cls << "\")\n";
+        }
+        lua << "\n";
+        for (int id : instOrder) {
+            if (!insts.count(id)) continue;
+            auto& d = insts[id];
+            bool any = false;
+            for (auto& kv : d.props) {
+                if (kv.key == "ClassName") continue;
+                lua << d.varName << "." << kv.key << " = " << quoteVal(kv.value) << "\n";
+                any = true;
+            }
+            for (auto& tw : tweens) {
+                if (tw.instId == id) {
+                    lua << "TweenService:Create(" << d.varName << ", "
+                        << tw.info << ", {" << tw.props << "}):Play()\n";
+                }
+            }
+            if (any) lua << "\n";
+        }
+        lua << "-- parent assignments\n";
+        for (int id : instOrder) {
+            if (!insts.count(id)) continue;
+            auto& d = insts[id];
+            if (d.parentId != 0 || !d.parentClass.empty()) {
+                std::string pexpr = parentExpr(d.parentId, d.parentClass, insts);
+                lua << d.varName << ".Parent = " << pexpr << "\n";
+            }
         }
         lua << "\n";
     }
 
     if (!connections.empty()) {
         lua << "-- event connections\n";
-        for (auto& c : connections) {
-            size_t dot = c.rfind('.');
-            std::string eventName = (dot != std::string::npos) ? c.substr(dot + 1) : c;
-            lua << "-- " << eventName << ":Connect(function() end)\n";
+        for (auto& ce : connections) {
+            std::string instName = insts.count(ce.instId) ? insts.at(ce.instId).varName : "inst_" + std::to_string(ce.instId);
+            lua << "-- " << instName << "." << ce.signal << ":Connect(function() end)\n";
         }
         lua << "\n";
     }
 
     if (!chatMessages.empty()) {
-        lua << "-- chat messages\n";
+        lua << "task.wait(2)\npcall(function()\n";
+        lua << "    local general = TextChatService.TextChannels:WaitForChild(\"RBXGeneral\", 5)\n";
         for (auto& msg : chatMessages)
-            lua << "TextChatService.TextChannels.RBXGeneral:SendAsync(\"" << msg << "\")\n";
-        lua << "\n";
+            lua << "    general:SendAsync(" << quoteVal(msg) << ")\n";
+        lua << "end)\n";
     }
 
-    if (services.empty() && remoteFires.empty() && httpUrls.empty() && instances.empty()) {
-        lua << "-- sandbox captured no events.\n";
-        lua << "-- the script may not be Prometheus-obfuscated or may require a Roblox environment.\n";
-    }
+    if (services.empty() && remoteFires.empty() && httpUrls.empty() && instOrder.empty())
+        lua << "-- sandbox captured no events (script may require Roblox executor)\n";
 
     return lua.str();
 }
@@ -466,10 +766,7 @@ SandboxResult runSandboxDeobfuscate(const std::string& source) {
     {
         HANDLE h = CreateFileA(sandboxPath.c_str(), GENERIC_WRITE, 0, nullptr,
                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (h == INVALID_HANDLE_VALUE) {
-            result.error = "Cannot write sandbox to temp";
-            return result;
-        }
+        if (h == INVALID_HANDLE_VALUE) { result.error = "Cannot write sandbox"; return result; }
         DWORD written;
         WriteFile(h, SANDBOX_LUA, (DWORD)strlen(SANDBOX_LUA), &written, nullptr);
         CloseHandle(h);
@@ -477,10 +774,7 @@ SandboxResult runSandboxDeobfuscate(const std::string& source) {
     {
         HANDLE h = CreateFileA(scriptPath.c_str(), GENERIC_WRITE, 0, nullptr,
                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (h == INVALID_HANDLE_VALUE) {
-            result.error = "Cannot write input to temp";
-            return result;
-        }
+        if (h == INVALID_HANDLE_VALUE) { result.error = "Cannot write input"; return result; }
         DWORD written;
         WriteFile(h, source.data(), (DWORD)source.size(), &written, nullptr);
         CloseHandle(h);
@@ -489,7 +783,7 @@ SandboxResult runSandboxDeobfuscate(const std::string& source) {
     result.rawLog = runCapture(result.luaExePath, sandboxPath, scriptPath);
 
     if (result.rawLog.find("=== SANDBOX LOG ===") == std::string::npos) {
-        result.error = "Sandbox produced no log (Lua error or timeout).\n" + result.rawLog.substr(0, 500);
+        result.error = "Sandbox produced no log.\n" + result.rawLog.substr(0, 500);
         return result;
     }
 
