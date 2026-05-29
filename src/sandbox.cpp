@@ -625,11 +625,15 @@ static std::string logToLua(const std::string& rawLog) {
             }
         } else if (tag == "PROP_PARENT") {
             if (parts.size() >= 3) {
-                int id = std::stoi(parts[0]);
+                int id  = std::stoi(parts[0]);
                 int pid = std::stoi(parts[1]);
+                std::string pcls = parts[2];
                 if (insts.count(id)) {
-                    insts[id].parentId    = pid;
-                    insts[id].parentClass = parts[2];
+                    bool alreadyGood = !insts[id].parentClass.empty() && insts[id].parentClass != "?";
+                    if (!alreadyGood) {
+                        insts[id].parentId    = pid;
+                        insts[id].parentClass = pcls;
+                    }
                 }
             }
         } else if (tag == "WAIT_FOR_CHILD") {
