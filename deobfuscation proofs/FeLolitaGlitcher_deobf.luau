@@ -10,15 +10,13 @@ local TextChatService   = game:GetService("TextChatService")
 
 local lp        = Players.LocalPlayer
 local character = lp.Character or lp.CharacterAdded:Wait()
-local humanoid  = character:WaitForChild("Humanoid")
-local torso     = character:WaitForChild("Torso")
-local hrp       = character:WaitForChild("HumanoidRootPart")
-local head      = character:WaitForChild("Head")
+local humanoid, torso, hrp, head
 
-local reanimateSource = game:HttpGet("https://raw.githubusercontent.com/oldhacfard/The-script/refs/heads/main/Reanimate.luau")
+local REANIMATE_URL = "https://raw.githubusercontent.com/oldhacfard/The-script/refs/heads/main/Reanimate.luau"
 
 local function runReanimate()
-    local fn, err = loadstring(reanimateSource)
+    local src = game:HttpGet(REANIMATE_URL)
+    local fn, err = loadstring(src)
     if fn then
         local ok, runErr = pcall(fn)
         if not ok then warn("[FeLolitaGlitcher] reanimate error: " .. tostring(runErr)) end
@@ -36,6 +34,13 @@ server:FireServer("cmd", "-gh",
     82742704984803)
 server:FireServer("cmd", "-sh")
 server:FireServer("cmd", "-net")
+
+-- -rs triggers a server respawn; wait for the new character before reanimating
+character = lp.CharacterAdded:Wait()
+humanoid  = character:WaitForChild("Humanoid", 10)
+torso     = character:WaitForChild("Torso", 10)
+hrp       = character:WaitForChild("HumanoidRootPart", 10)
+head      = character:WaitForChild("Head", 10)
 
 runReanimate()
 
@@ -108,13 +113,12 @@ local uIGradient_2   = Instance.new("UIGradient")
 -- RunService.Heartbeat:Connect(function() end)
 
 humanoid.Died:Connect(function()
-    task.wait(0.5)
     local newChar = lp.CharacterAdded:Wait()
     character = newChar
-    humanoid  = newChar:WaitForChild("Humanoid", 5)
-    hrp       = newChar:WaitForChild("HumanoidRootPart", 5)
-    torso     = newChar:WaitForChild("Torso", 5)
-    head      = newChar:WaitForChild("Head", 5)
+    humanoid  = newChar:WaitForChild("Humanoid", 10)
+    torso     = newChar:WaitForChild("Torso", 10)
+    hrp       = newChar:WaitForChild("HumanoidRootPart", 10)
+    head      = newChar:WaitForChild("Head", 10)
     runReanimate()
     grabJoints()
 end)
