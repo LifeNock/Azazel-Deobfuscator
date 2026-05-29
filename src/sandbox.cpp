@@ -737,6 +737,25 @@ static std::string logToLua(const std::string& rawLog) {
     }
 
     if (!instOrder.empty()) {
+        int firstScreenGuiId = 0, firstFrameId = 0;
+        for (int id : instOrder) {
+            if (!insts.count(id)) continue;
+            if (!firstScreenGuiId && insts[id].cls == "ScreenGui") firstScreenGuiId = id;
+            if (!firstFrameId    && insts[id].cls == "Frame")      firstFrameId = id;
+        }
+        for (int id : instOrder) {
+            if (!insts.count(id)) continue;
+            auto& d = insts[id];
+            bool unresolved = (d.parentClass.empty() || d.parentClass == "?");
+            if (!unresolved) continue;
+            if (d.cls == "Sound") {
+                if (firstFrameId)          { d.parentId = firstFrameId;     d.parentClass = "Frame"; }
+                else if (firstScreenGuiId) { d.parentId = firstScreenGuiId; d.parentClass = "ScreenGui"; }
+            } else if (d.cls == "BillboardGui") {
+                d.parentId = 0; d.parentClass = "Model";
+            }
+        }
+
         for (int id : instOrder) {
             if (!insts.count(id)) continue;
             auto& d = insts[id];
