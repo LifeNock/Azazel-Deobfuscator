@@ -98,8 +98,15 @@ CFrame = {
 }
 TweenInfo = {new=function(t,es,ed,rc,rev,dt)
     return setmetatable({t=t,es=es,ed=ed,rc=rc,rev=rev,dt=dt},{
-        __tostring=function(s) return ("TweenInfo.new(%g,%s,%s,%g,%s,%g)"):format(
-            s.t or 0,tostring(s.es),tostring(s.ed),s.rc or 0,tostring(s.rev or false),s.dt or 0) end
+        __tostring=function(s)
+            local a={tostring(s.t or 0),tostring(s.es),tostring(s.ed),tostring(s.rc or 0),tostring(s.rev or false),tostring(s.dt or 0)}
+            local last=1
+            for i=#a,1,-1 do
+                if a[i]~="nil" and a[i]~="false" and a[i]~="0" then last=i; break end
+            end
+            local p={} for i=1,last do p[i]=a[i] end
+            return "TweenInfo.new("..table.concat(p,",")..")"
+        end
     })
 end}
 Enum = setmetatable({},{__index=function(t,k)
