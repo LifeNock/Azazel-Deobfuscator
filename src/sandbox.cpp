@@ -138,6 +138,7 @@ BrickColor={new=function(v) return setmetatable({},{__tostring=function() return
 
 local inst_counter = 0
 local LOGGING = false
+local _players, _replicatedStorage, _lp, _char, _pgui
 
 local function make_inst(class, user_new)
     inst_counter = inst_counter + 1
@@ -288,12 +289,12 @@ static const char SANDBOX_LUA_B[] = R"SBB(
 game      = make_inst("DataModel")
 workspace = make_inst("Workspace")
 
-local _char              = make_inst("Model")
-local _lp                = make_inst("Player")
-local _players           = make_inst("Players")
-local _pgui              = make_inst("PlayerGui")
-local _backpack          = make_inst("Backpack")
-local _replicatedStorage = make_inst("ReplicatedStorage")
+_char              = make_inst("Model")
+_lp                = make_inst("Player")
+_players           = make_inst("Players")
+_pgui              = make_inst("PlayerGui")
+local _backpack    = make_inst("Backpack")
+_replicatedStorage = make_inst("ReplicatedStorage")
 
 _lp.Name        = "TargetPlayer"
 _lp.UserId      = 12345678
