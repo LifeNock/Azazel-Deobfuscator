@@ -149,7 +149,8 @@ local function make_inst(class, user_new)
     local mt = {}
 
     mt.__index = function(t, k)
-        if props[k] ~= nil then return props[k] end
+        if k == "Parent"    then return props["Parent"] end
+        if props[k] ~= nil  then return props[k] end
         if k == "_id"       then return myid end
         if k == "ClassName" then return class end
 
