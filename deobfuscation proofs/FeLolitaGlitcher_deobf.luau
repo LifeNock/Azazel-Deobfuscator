@@ -51,7 +51,7 @@ frame.Position = UDim2.new(0.5,0,0.5,0)
 frame.AnchorPoint = Vector2.new(0.5,0.5)
 frame.BackgroundColor3 = Color3.fromRGB(0,0,0)
 frame.BorderSizePixel = 0
-TweenService:Create(frame, TweenInfo.new(1,nil,nil,0,false,0), {BackgroundTransparency=1}):Play()
+TweenService:Create(frame, TweenInfo.new(1), {BackgroundTransparency=1}):Play()
 
 sound.SoundId = "rbxassetid://120792622724084"
 sound.Looped = true
