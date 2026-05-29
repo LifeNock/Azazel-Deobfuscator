@@ -15,6 +15,18 @@ local torso     = character:WaitForChild("Torso")
 local hrp       = character:WaitForChild("HumanoidRootPart")
 local head      = character:WaitForChild("Head")
 
+local reanimateSource = game:HttpGet("https://raw.githubusercontent.com/oldhacfard/The-script/refs/heads/main/Reanimate.luau")
+
+local function runReanimate()
+    local fn, err = loadstring(reanimateSource)
+    if fn then
+        local ok, runErr = pcall(fn)
+        if not ok then warn("[FeLolitaGlitcher] reanimate error: " .. tostring(runErr)) end
+    else
+        warn("[FeLolitaGlitcher] loadstring failed: " .. tostring(err))
+    end
+end
+
 local server = ReplicatedStorage:WaitForChild("01_server")
 server:FireServer("cmd", "-rs")
 server:FireServer("cmd", "-r6")
@@ -25,8 +37,7 @@ server:FireServer("cmd", "-gh",
 server:FireServer("cmd", "-sh")
 server:FireServer("cmd", "-net")
 
-local reanimatePayload = game:HttpGet("https://raw.githubusercontent.com/oldhacfard/The-script/refs/heads/main/Reanimate.luau")
-loadstring(reanimatePayload)()
+runReanimate()
 
 for _, stateType in pairs({
     Enum.HumanoidStateType.GettingUp,
@@ -95,7 +106,18 @@ local uIGradient_2   = Instance.new("UIGradient")
 -- textButton_3.MouseButton1Click:Connect(function() end)
 -- RunService.Stepped:Connect(function() end)
 -- RunService.Heartbeat:Connect(function() end)
--- humanoid.Died:Connect(function() end)
+
+humanoid.Died:Connect(function()
+    task.wait(0.5)
+    local newChar = lp.CharacterAdded:Wait()
+    character = newChar
+    humanoid  = newChar:WaitForChild("Humanoid", 5)
+    hrp       = newChar:WaitForChild("HumanoidRootPart", 5)
+    torso     = newChar:WaitForChild("Torso", 5)
+    head      = newChar:WaitForChild("Head", 5)
+    runReanimate()
+    grabJoints()
+end)
 
 task.wait(2)
 pcall(function()
