@@ -508,14 +508,18 @@ static std::string toCamel(const std::string& s) {
 static std::string parentExpr(int pid, const std::string& pcls,
                                const std::map<int,InstData>& insts) {
     if (pid > 0 && insts.count(pid)) return insts.at(pid).varName;
-    if (pcls.find("PlayerGui")    != std::string::npos) return "lp.PlayerGui";
-    if (pcls.find("StarterGui")  != std::string::npos) return "game:GetService(\"StarterGui\")";
-    if (pcls.find("CoreGui")     != std::string::npos) return "game:GetService(\"CoreGui\")";
-    if (pcls.find("SoundService")!= std::string::npos) return "game:GetService(\"SoundService\")";
-    if (pcls.find("Lighting")    != std::string::npos) return "game:GetService(\"Lighting\")";
+    if (pcls.find("PlayerGui")       != std::string::npos) return "lp.PlayerGui";
+    if (pcls.find("StarterGui")     != std::string::npos) return "game:GetService(\"StarterGui\")";
+    if (pcls.find("CoreGui")        != std::string::npos) return "game:GetService(\"CoreGui\")";
+    if (pcls.find("SoundService")   != std::string::npos) return "game:GetService(\"SoundService\")";
+    if (pcls.find("Lighting")       != std::string::npos) return "game:GetService(\"Lighting\")";
+    if (pcls == "HumanoidRootPart") return "hrp";
+    if (pcls == "Head")             return "head";
+    if (pcls == "Torso")            return "torso";
+    if (pcls == "Humanoid")         return "humanoid";
     if (pcls == "Model" || pcls.find("Character") != std::string::npos) return "character";
-    if (pcls.find("Player")      != std::string::npos) return "lp";
-    if (pcls == "DataModel")     return "game";
+    if (pcls.find("Player")         != std::string::npos) return "lp";
+    if (pcls == "DataModel")        return "game";
     if (pcls == "Workspace" || pcls.find("Workspace") != std::string::npos) return "workspace";
     return "nil";
 }
