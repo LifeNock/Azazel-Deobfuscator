@@ -307,12 +307,12 @@ static std::string logToLua(const std::string& rawLog) {
     std::set<std::string>    seenSvc;
     std::vector<std::string> remoteFires;
     std::string              remoteEventName;
+    std::string              remoteEventRaw;
     std::vector<std::string> httpUrls;
     int                      loadstringCount = 0;
     std::vector<std::string> instances;
     std::vector<std::string> connections;
     std::vector<std::string> chatMessages;
-    std::vector<std::string> waitForChildCalls;
     std::set<std::string>    seenWFC;
 
     while (std::getline(stream, line)) {
@@ -338,11 +338,22 @@ static std::string logToLua(const std::string& rawLog) {
             loadstringCount++;
         } else if (line.size() > 15 && line.substr(0, 15) == "[INSTANCE_NEW] ") {
             instances.push_back(line.substr(15));
-        } else if (line.size() > 13 && line.substr(0, 13) == "[WAIT_FOR_CHILD] ") {
-            auto parts = splitPipe(line.substr(13));
+        } else if (line.size() > 17 && line.substr(0, 17) == "[WAIT_FOR_CHILD] ") {
+            auto parts = splitPipe(line.substr(17));
             if (parts.size() >= 2) {
                 std::string entry = parts[0] + " -> " + parts[1];
-                if (!seenWFC.count(entry)) { seenWFC.insert(entry); waitForChildCalls.push_back(entry); }
+                if (!seenWFC.count(entry)) {
+                    seenWFC.insert(entry);
+                    if (remoteEventName.empty() && parts[0] == "ReplicatedStorage") {
+                        remoteEventRaw = parts[1];
+                        std::string var;
+                        if (!remoteEventRaw.empty() && std::isdigit((unsigned char)remoteEventRaw[0]))
+                            var = "_";
+                        for (char c : remoteEventRaw)
+                            var += (std::isalnum((unsigned char)c) || c == '_') ? c : '_';
+                        remoteEventName = var;
+                    }
+                }
             }
         } else if (line.size() > 12 && line.substr(0, 12) == "[STUB_CALL] ") {
             std::string body = line.substr(12);
@@ -372,11 +383,13 @@ static std::string logToLua(const std::string& rawLog) {
     }
 
     if (!remoteFires.empty()) {
+        if (remoteEventName.empty()) { remoteEventName = "remote"; remoteEventRaw = "remote"; }
         lua << "-- remote events\n";
-        lua << "local cmd = ReplicatedStorage:WaitForChild(\"cmd\")\n";
+        lua << "local " << remoteEventName << " = ReplicatedStorage:WaitForChild(\""
+            << remoteEventRaw << "\")\n";
         for (auto& f : remoteFires) {
             auto parts = splitPipe(f);
-            lua << "cmd:FireServer(";
+            lua << remoteEventName << ":FireServer(";
             for (size_t i = 0; i < parts.size(); i++) {
                 if (i) lua << ", ";
                 lua << "\"" << parts[i] << "\"";
