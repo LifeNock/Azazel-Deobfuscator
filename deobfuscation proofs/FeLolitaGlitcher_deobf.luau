@@ -9,7 +9,7 @@ local TextChatService = game:GetService("TextChatService")
 
 local lp = Players.LocalPlayer
 
-local _01_server = game:GetService("ReplicatedStorage"):WaitForChild("01_server")
+local _01_server = ReplicatedStorage:WaitForChild("01_server")
 _01_server:FireServer("cmd", "-rs")
 _01_server:FireServer("cmd", "-r6")
 _01_server:FireServer("cmd", "-gh 5316479641 5316539421 5699795428 5316549755 5268602207 5268555719 82742704984803")
@@ -17,6 +17,12 @@ _01_server:FireServer("cmd", "-sh")
 _01_server:FireServer("cmd", "-net")
 
 loadstring(game:HttpGet("https://raw.githubusercontent.com/oldhacfard/The-script/refs/heads/main/Reanimate.luau"))()
+
+local character = lp.Character or lp.CharacterAdded:Wait()
+local humanoid  = character:WaitForChild("Humanoid")
+local hrp       = character:WaitForChild("HumanoidRootPart")
+local torso     = character:WaitForChild("Torso")
+local head      = character:WaitForChild("Head")
 
 local circleOverlay = Instance.new("ScreenGui")
 local frame = Instance.new("Frame")
@@ -42,6 +48,7 @@ local textLabel_6 = Instance.new("TextLabel")
 local uIGradient_2 = Instance.new("UIGradient")
 
 circleOverlay.Name = "CircleOverlay"
+circleOverlay.ResetOnSpawn = false
 circleOverlay.IgnoreGuiInset = true
 circleOverlay.DisplayOrder = 999999
 circleOverlay.ScreenInsets = Enum.ScreenInsets.None
@@ -185,7 +192,6 @@ textLabel_6.TextStrokeColor3 = Color3.fromRGB(0,0,0)
 uIGradient_2.Color = ColorSequence.new({ColorSequenceKeypoint.new(0,Color3.fromRGB(255,0,0)),ColorSequenceKeypoint.new(1,Color3.fromRGB(0,0,0))})
 uIGradient_2.Rotation = 90
 
--- parent assignments
 circleOverlay.Parent = lp.PlayerGui
 frame.Parent = circleOverlay
 sound.Parent = hrp
@@ -209,14 +215,96 @@ mayhemGui.Parent = head
 textLabel_6.Parent = mayhemGui
 uIGradient_2.Parent = textLabel_6
 
--- event connections
--- inst_10.InputBegan:Connect(function() end)
--- textButton.MouseButton1Click:Connect(function() end)
--- textButton_2.MouseButton1Click:Connect(function() end)
--- textButton_3.MouseButton1Click:Connect(function() end)
--- inst_11.Stepped:Connect(function() end)
--- inst_11.Heartbeat:Connect(function() end)
--- inst_17.Died:Connect(function() end)
+sound:Play()
+
+local noclipEnabled = false
+
+local function doReanimate()
+    character = lp.Character or lp.CharacterAdded:Wait()
+    humanoid  = character:WaitForChild("Humanoid", 5)
+    hrp       = character:WaitForChild("HumanoidRootPart", 5)
+    torso     = character:WaitForChild("Torso", 5)
+    head      = character:WaitForChild("Head", 5)
+    mayhemGui.Adornee = head
+    loadstring(game:HttpGet("https://raw.githubusercontent.com/oldhacfard/The-script/refs/heads/main/Reanimate.luau"))()
+end
+
+textButton.MouseButton1Click:Connect(function()
+    local nearest, nearestDist = nil, math.huge
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= lp and player.Character then
+            local targetHRP = player.Character:FindFirstChild("HumanoidRootPart")
+            if targetHRP then
+                local dist = (targetHRP.Position - hrp.Position).Magnitude
+                if dist < nearestDist then
+                    nearest = player
+                    nearestDist = dist
+                end
+            end
+        end
+    end
+    if nearest and nearest.Character then
+        local targetHRP2 = nearest.Character:FindFirstChild("HumanoidRootPart")
+        if targetHRP2 then
+            hrp.CFrame = CFrame.new(targetHRP2.Position + Vector3.new(0, 2, 0))
+        end
+        task.wait(0.1)
+        pcall(function() nearest.Character:BreakJoints() end)
+    end
+end)
+
+textButton_2.MouseButton1Click:Connect(function()
+    noclipEnabled = not noclipEnabled
+    if noclipEnabled then
+        textLabel_4.TextColor3 = Color3.fromRGB(0, 255, 100)
+    else
+        textLabel_4.TextColor3 = Color3.fromRGB(255, 255, 255)
+    end
+end)
+
+textButton_3.MouseButton1Click:Connect(function()
+    doReanimate()
+end)
+
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    if input.KeyCode == Enum.KeyCode.Q then
+        textButton.MouseButton1Click:Fire()
+    elseif input.KeyCode == Enum.KeyCode.E then
+        textButton_2.MouseButton1Click:Fire()
+    elseif input.KeyCode == Enum.KeyCode.R then
+        textButton_3.MouseButton1Click:Fire()
+    end
+end)
+
+RunService.Stepped:Connect(function()
+    if not noclipEnabled then return end
+    if not character or not character.Parent then return end
+    for _, part in pairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = false
+        end
+    end
+end)
+
+RunService.Heartbeat:Connect(function()
+    if not circleOverlay.Parent then
+        circleOverlay.Parent = lp.PlayerGui
+    end
+end)
+
+humanoid.Died:Connect(function()
+    task.wait(0.5)
+    local newChar = lp.CharacterAdded:Wait()
+    character = newChar
+    humanoid  = newChar:WaitForChild("Humanoid", 5)
+    hrp       = newChar:WaitForChild("HumanoidRootPart", 5)
+    torso     = newChar:WaitForChild("Torso", 5)
+    head      = newChar:WaitForChild("Head", 5)
+    sound.Parent = hrp
+    mayhemGui.Adornee = head
+    doReanimate()
+end)
 
 task.wait(2)
 pcall(function()
