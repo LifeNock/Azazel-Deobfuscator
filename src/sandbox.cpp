@@ -8,7 +8,7 @@
 #include <map>
 #include <algorithm>
 
-static const char* SANDBOX_LUA = R"SANDBOX(
+static const char SANDBOX_LUA_A[] = R"SBA(
 local LOG = {}
 local cb_depth = 0
 
@@ -113,15 +113,24 @@ end})
 NumberSequenceKeypoint={new=function(t,v,e) return setmetatable({},{__tostring=function() return ("NumberSequenceKeypoint.new(%g,%g,%g)"):format(t or 0,v or 0,e or 0) end}) end}
 ColorSequenceKeypoint={new=function(t,c) return setmetatable({},{__tostring=function() return ("ColorSequenceKeypoint.new(%g,%s)"):format(t or 0,tostring(c)) end}) end}
 NumberSequence={new=function(v)
-    if type(v)=="table" then local p={} for _,k in ipairs(v) do p[#p+1]=tostring(k) end
-        return setmetatable({},{__tostring=function() return "NumberSequence.new({"..table.concat(p,",").."}" end}) end
+    if type(v)=="table" then
+        local p={}
+        for _,k in ipairs(v) do p[#p+1]=tostring(k) end
+        local joined=table.concat(p,",")
+        return setmetatable({},{__tostring=function() return "NumberSequence.new({"..joined.."})" end})
+    end
     return setmetatable({},{__tostring=function() return "NumberSequence.new("..tostring(v)..")" end})
 end}
 ColorSequence={new=function(v)
-    if type(v)=="table" then local p={} for _,k in ipairs(v) do p[#p+1]=tostring(k) end
-        return setmetatable({},{__tostring=function() return "ColorSequence.new({"..table.concat(p,",").."}" end}) end
+    if type(v)=="table" then
+        local p={}
+        for _,k in ipairs(v) do p[#p+1]=tostring(k) end
+        local joined=table.concat(p,",")
+        return setmetatable({},{__tostring=function() return "ColorSequence.new({"..joined.."})" end})
+    end
     return setmetatable({},{__tostring=function() return "ColorSequence.new("..tostring(v)..")" end})
 end}
+
 PhysicalProperties={new=function(...) local a,p={...},{} for _,v in ipairs(a) do p[#p+1]=tostring(v) end
     return setmetatable({},{__tostring=function() return "PhysicalProperties.new("..table.concat(p,",")..")" end}) end}
 BrickColor={new=function(v) return setmetatable({},{__tostring=function() return 'BrickColor.new('..tostring(v)..')' end}) end,
@@ -268,7 +277,9 @@ local function make_inst(class, user_new)
     setmetatable(proxy, mt)
     return proxy
 end
+)SBA";
 
+static const char SANDBOX_LUA_B[] = R"SBB(
 game      = make_inst("DataModel")
 workspace = make_inst("Workspace")
 
@@ -358,7 +369,10 @@ end
 print("=== SANDBOX LOG ===")
 for _, e in ipairs(LOG) do print(e) end
 print("=== END LOG ===")
-)SANDBOX";
+)SBB";
+
+static const std::string SANDBOX_LUA_STR = std::string(SANDBOX_LUA_A) + SANDBOX_LUA_B;
+static const char* SANDBOX_LUA = SANDBOX_LUA_STR.c_str();
 
 std::string findLuaExe() {
     static const char* candidates[] = {
@@ -486,14 +500,29 @@ static std::string toCamel(const std::string& s) {
 static std::string parentExpr(int pid, const std::string& pcls,
                                const std::map<int,InstData>& insts) {
     if (pid > 0 && insts.count(pid)) return insts.at(pid).varName;
-    if (pcls == "PlayerGui")       return "lp.PlayerGui";
-    if (pcls == "Model")           return "character";
-    if (pcls == "Player")          return "lp";
-    if (pcls == "DataModel")       return "game";
-    if (pcls == "Workspace")       return "workspace";
-    if (pcls == "StarterGui")      return "game:GetService(\"StarterGui\")";
-    if (pcls == "CoreGui")         return "game:GetService(\"CoreGui\")";
+    if (pcls.find("PlayerGui")  != std::string::npos) return "lp.PlayerGui";
+    if (pcls.find("StarterGui") != std::string::npos) return "game:GetService(\"StarterGui\")";
+    if (pcls.find("CoreGui")    != std::string::npos) return "game:GetService(\"CoreGui\")";
+    if (pcls == "Model" || pcls.find("Character") != std::string::npos) return "character";
+    if (pcls.find("Player")    != std::string::npos) return "lp";
+    if (pcls == "DataModel")   return "game";
+    if (pcls == "Workspace")   return "workspace";
     return "nil";
+}
+
+static std::string instReprToExpr(const std::string& v) {
+    size_t lt = v.find('<');
+    size_t colon = v.find(':', lt);
+    if (lt == std::string::npos || colon == std::string::npos) return "";
+    std::string cls = v.substr(lt + 1, colon - lt - 1);
+    if (cls == "Head")              return "head";
+    if (cls == "HumanoidRootPart")  return "hrp";
+    if (cls == "Humanoid")          return "humanoid";
+    if (cls == "Torso")             return "torso";
+    if (cls == "Model")             return "character";
+    if (cls == "Player")            return "lp";
+    if (cls.find("PlayerGui") != std::string::npos) return "lp.PlayerGui";
+    return "character:FindFirstChild(\"" + cls + "\")";
 }
 
 static std::string quoteVal(const std::string& v) {
@@ -503,6 +532,10 @@ static std::string quoteVal(const std::string& v) {
         for (size_t i = (v[0]=='-'?1:0); i < v.size(); i++)
             if (!isdigit((unsigned char)v[i]) && v[i] != '.') { isNum = false; break; }
         if (isNum) return v;
+    }
+    if (v.find("RobloxInstance<") == 0) {
+        std::string expr = instReprToExpr(v);
+        return expr.empty() ? "nil" : expr;
     }
     if (v.find("Color3.") == 0 || v.find("UDim2.") == 0 || v.find("UDim.") == 0 ||
         v.find("Vector3.") == 0 || v.find("Vector2.") == 0 || v.find("CFrame.") == 0 ||
