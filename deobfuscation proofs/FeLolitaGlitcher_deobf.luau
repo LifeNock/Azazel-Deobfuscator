@@ -4,45 +4,27 @@
 local UserInputService  = game:GetService("UserInputService")
 local Players           = game:GetService("Players")
 local RunService        = game:GetService("RunService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService      = game:GetService("TweenService")
 local TextChatService   = game:GetService("TextChatService")
 
-local lp        = Players.LocalPlayer
-local character = lp.Character or lp.CharacterAdded:Wait()
-local humanoid, torso, hrp, head
+local lp = Players.LocalPlayer
 
-local REANIMATE_URL = "https://raw.githubusercontent.com/oldhacfard/The-script/refs/heads/main/Reanimate.luau"
-
-local function runReanimate()
-    local src = game:HttpGet(REANIMATE_URL)
-    local fn, err = loadstring(src)
-    if fn then
-        local ok, runErr = pcall(fn)
-        if not ok then warn("[FeLolitaGlitcher] reanimate error: " .. tostring(runErr)) end
-    else
-        warn("[FeLolitaGlitcher] loadstring failed: " .. tostring(err))
-    end
-end
-
-local server = ReplicatedStorage:WaitForChild("01_server")
-server:FireServer("cmd", "-rs")
-server:FireServer("cmd", "-r6")
-server:FireServer("cmd", "-gh",
+game:GetService("ReplicatedStorage"):WaitForChild("01_server"):FireServer("cmd", "-rs")
+game:GetService("ReplicatedStorage"):WaitForChild("01_server"):FireServer("cmd", "-r6")
+game:GetService("ReplicatedStorage"):WaitForChild("01_server"):FireServer("cmd", "-gh",
     5316479641, 5316539421, 5699795428,
     5316549755, 5268602207, 5268555719,
     82742704984803)
-server:FireServer("cmd", "-sh")
-server:FireServer("cmd", "-net")
+game:GetService("ReplicatedStorage"):WaitForChild("01_server"):FireServer("cmd", "-sh")
+game:GetService("ReplicatedStorage"):WaitForChild("01_server"):FireServer("cmd", "-net")
 
--- -rs triggers a server respawn; wait for the new character before reanimating
-character = lp.CharacterAdded:Wait()
-humanoid  = character:WaitForChild("Humanoid", 10)
-torso     = character:WaitForChild("Torso", 10)
-hrp       = character:WaitForChild("HumanoidRootPart", 10)
-head      = character:WaitForChild("Head", 10)
+loadstring(game:HttpGet("https://raw.githubusercontent.com/oldhacfard/The-script/refs/heads/main/Reanimate.luau"))()
 
-runReanimate()
+local character = lp.Character or lp.CharacterAdded:Wait()
+local humanoid  = character:WaitForChild("Humanoid")
+local torso     = character:WaitForChild("Torso")
+local hrp       = character:WaitForChild("HumanoidRootPart")
+local head      = character:WaitForChild("Head")
 
 for _, stateType in pairs({
     Enum.HumanoidStateType.GettingUp,
@@ -63,19 +45,17 @@ for _, track in pairs(humanoid:GetPlayingAnimationTracks()) do
 end
 
 local joints = {}
-local function grabJoints()
-    local t = character:WaitForChild("Torso", 3)
-    local h = character:WaitForChild("HumanoidRootPart", 3)
-    if not (t and h) then return end
+local t = character:WaitForChild("Torso", 3)
+local h = character:WaitForChild("HumanoidRootPart", 3)
+if t and h then
     for _, name in ipairs({"Neck", "Right Shoulder", "Left Shoulder", "Right Hip", "Left Hip"}) do
         joints[name] = t:WaitForChild(name, 3)
     end
     joints["RootJoint"] = h:WaitForChild("RootJoint", 3)
 end
-grabJoints()
 
-local screenGui = Instance.new("ScreenGui")
-local mainFrame = Instance.new("Frame")
+local screenGui  = Instance.new("ScreenGui")
+local mainFrame  = Instance.new("Frame")
 
 TweenService:Create(mainFrame,
     TweenInfo.new(0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out),
@@ -111,17 +91,7 @@ local uIGradient_2   = Instance.new("UIGradient")
 -- textButton_3.MouseButton1Click:Connect(function() end)
 -- RunService.Stepped:Connect(function() end)
 -- RunService.Heartbeat:Connect(function() end)
-
-humanoid.Died:Connect(function()
-    local newChar = lp.CharacterAdded:Wait()
-    character = newChar
-    humanoid  = newChar:WaitForChild("Humanoid", 10)
-    torso     = newChar:WaitForChild("Torso", 10)
-    hrp       = newChar:WaitForChild("HumanoidRootPart", 10)
-    head      = newChar:WaitForChild("Head", 10)
-    runReanimate()
-    grabJoints()
-end)
+-- humanoid.Died:Connect(function() end)
 
 task.wait(2)
 pcall(function()
